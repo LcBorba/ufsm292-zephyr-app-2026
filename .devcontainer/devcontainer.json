@@ -1,0 +1,37 @@
+{
+  "name": "Zephyr - UFSM292 Projeto Final",
+
+  // Imagem oficial do Zephyr Project: já traz o Zephyr SDK (toolchains ARM,
+  // incluindo arm-zephyr-eabi), west, CMake, Ninja, dtc e demais dependências.
+  "image": "ghcr.io/zephyrproject-rtos/ci:latest",
+
+  // O repositório clonado pelo Codespaces é montado um nível ABAIXO da raiz
+  // do workspace west, para que "zephyr" e os demais módulos (HALs, etc.)
+  // possam ser baixados como pastas irmãs por "west update" em onCreateCommand.sh.
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace/ufsm292-zephyr-app-2026,type=bind",
+  "workspaceFolder": "/workspace/ufsm292-zephyr-app-2026",
+
+  "onCreateCommand": "bash -i /workspace/ufsm292-zephyr-app-2026/.devcontainer/onCreateCommand.sh",
+
+  "remoteEnv": {
+    "LC_ALL": "C",
+    "ZEPHYR_TOOLCHAIN_VARIANT": "zephyr"
+  },
+
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "cmake.configureOnOpen": false,
+        "cmake.showOptionsMovedNotification": false,
+        "C_Cpp.default.compileCommands": "/workspace/ufsm292-zephyr-app-2026/app/build/compile_commands.json",
+        "git.autofetch": false
+      },
+      "extensions": [
+        "ms-vscode.cpptools-extension-pack",
+        "ms-vscode.cmake-tools",
+        "trond-snekvik.devicetree",
+        "redhat.vscode-yaml"
+      ]
+    }
+  }
+}
