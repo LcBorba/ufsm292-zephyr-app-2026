@@ -7,7 +7,7 @@ export PATH="$HOME/.local/bin:$PATH"
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
 pip3 install --user west
 
-cd /workspaces
+cd /workspace
 
 # Trata o repositório montado (que já contém west.yml na raiz) como o
 # repositório-manifesto local do workspace west.
@@ -23,7 +23,7 @@ pip3 install --user -r zephyr/scripts/requirements.txt
 
 # Conveniências de terminal
 echo "alias ll='ls -lah'" >> "$HOME/.bashrc"
-echo "cd /workspaces/ufsm292-zephyr-app-2026" >> "$HOME/.bashrc"
+echo "cd /workspace/ufsm292-zephyr-app-2026" >> "$HOME/.bashrc"
 west completion bash > "$HOME/west-completion.bash"
 echo 'source $HOME/west-completion.bash' >> "$HOME/.bashrc"
 
