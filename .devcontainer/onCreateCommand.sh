@@ -1,6 +1,12 @@
 #!/bin/bash
 set -e
 
+# west nao vem pre-instalado na imagem "ci" — so o SDK/toolchain vem.
+# Instala west para o usuario atual e garante que fique no PATH.
+export PATH="$HOME/.local/bin:$PATH"
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+pip3 install --user west
+
 cd /workspace
 
 # Trata o repositório montado (que já contém west.yml na raiz) como o
@@ -13,7 +19,7 @@ west update
 
 west zephyr-export
 
-pip install --user -r zephyr/scripts/requirements.txt
+pip3 install --user -r zephyr/scripts/requirements.txt
 
 # Conveniências de terminal
 echo "alias ll='ls -lah'" >> "$HOME/.bashrc"
