@@ -16,9 +16,12 @@ west init -l ufsm292-zephyr-app-2026
 # no west.yml como pastas irmãs em /workspace (zephyr/, modules/, ...).
 west update
 
-# Precisa vir ANTES de "west zephyr-export": o export usa jsonschema,
-# que so existe depois de instalar os requirements do Zephyr.
-pip3 install -r zephyr/scripts/requirements.txt
+# Só o "base" (inclui jsonschema, usado pelo "west zephyr-export" logo
+# abaixo). O requirements.txt completo do Zephyr traz também os
+# requirements de compliance/testes/extras — pacotes pesados demais
+# (e um deles, tree-sitter-cmake, precisa de um compilador C que esta
+# imagem enxuta não tem) e desnecessários só para compilar e gravar.
+pip3 install -r zephyr/scripts/requirements-base.txt
 
 west zephyr-export
 
