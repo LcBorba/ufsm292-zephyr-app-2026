@@ -1,9 +1,11 @@
 {
   "name": "Zephyr - UFSM292 Projeto Final",
 
-  // Imagem oficial do Zephyr Project: já traz o Zephyr SDK (toolchains ARM,
-  // incluindo arm-zephyr-eabi), west, CMake, Ninja, dtc e demais dependências.
-  "image": "ghcr.io/zephyrproject-rtos/ci:latest",
+  // Imagem do projeto "Embedded Containers" (recomendada pela própria doc do
+  // Zephyr para quem só precisa de UMA arquitetura de toolchain — aqui, ARM
+  // Cortex-M para o SAMD21/SAMR21). Muito menor que ghcr.io/zephyrproject-rtos/ci,
+  // que traz toolchains para TODAS as arquiteturas e estourava o disco do Codespace.
+  "image": "ghcr.io/embeddedcontainers/zephyr:arm-1.0.1SDK",
 
   // O repositório clonado pelo Codespaces é montado um nível ABAIXO da raiz
   // do workspace west, para que "zephyr" e os demais módulos (HALs, etc.)
@@ -11,13 +13,9 @@
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace/ufsm292-zephyr-app-2026,type=bind",
   "workspaceFolder": "/workspace/ufsm292-zephyr-app-2026",
 
-  // A imagem ghcr.io/zephyrproject-rtos/ci define seu proprio usuario nao-root
-  // chamado "user" (home em /home/user). Sem isto, o Codespaces tenta usar
-  // "vscode" por padrao — que nao existe nesta imagem — e falha ao escrever
-  // em diretorios como /root.
-  "remoteUser": "user",
-  "containerUser": "user",
-
+  // Sem "remoteUser" definido, o Codespaces usa o usuario padrao já embutido
+  // nesta imagem. Se aparecer erro de permissao (ex.: "cannot create /root"),
+  // precisamos descobrir o nome do usuario padrao desta imagem e fixar aqui.
   "onCreateCommand": "bash -i /workspace/ufsm292-zephyr-app-2026/.devcontainer/onCreateCommand.sh",
 
   "remoteEnv": {
