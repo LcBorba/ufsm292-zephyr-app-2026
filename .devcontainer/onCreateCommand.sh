@@ -1,11 +1,10 @@
 #!/bin/bash
 set -e
 
-# west nao vem pre-instalado na imagem "ci" — so o SDK/toolchain vem.
-# Instala west para o usuario atual e garante que fique no PATH.
-export PATH="$HOME/.local/bin:$PATH"
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
-pip3 install --user west
+# Nesta imagem (embeddedcontainers/zephyr), west roda dentro do virtualenv
+# do proprio Zephyr SDK e ja deve estar disponivel. So instala se faltar,
+# sem a flag --user (que nao funciona dentro de virtualenvs).
+command -v west >/dev/null 2>&1 || pip3 install west
 
 cd /workspace
 
@@ -14,12 +13,12 @@ cd /workspace
 west init -l ufsm292-zephyr-app-2026
 
 # Baixa o kernel Zephyr e os módulos (HALs SAM0, CMSIS, etc.) declarados
-# no west.yml como pastas irmãs em /workspaces (zephyr/, modules/, ...).
+# no west.yml como pastas irmãs em /workspace (zephyr/, modules/, ...).
 west update
 
 west zephyr-export
 
-pip3 install --user -r zephyr/scripts/requirements.txt
+pip3 install -r zephyr/scripts/requirements.txt
 
 # Conveniências de terminal
 echo "alias ll='ls -lah'" >> "$HOME/.bashrc"
