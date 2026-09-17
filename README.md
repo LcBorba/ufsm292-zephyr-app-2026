@@ -96,6 +96,14 @@ Once you have built the application, run the following command to flash it:
 west flash
 ```
 
+#### Gateway (SAM R21 Xplained Pro)
+
+To build the gateway application for the SAM R21 Xplained Pro board:
+
+```shell
+west build -b samr21_xpro gateway
+```
+
 ### Testing
 
 To execute Twister integration tests, run the following command:
