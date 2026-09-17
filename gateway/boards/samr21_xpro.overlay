@@ -1,0 +1,24 @@
+/*
+ * Copyright (c) 2021 Nordic Semiconductor ASA
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/* This devicetree overlay file will be automatically picked by the Zephyr
+ * build system when building the sample for the samr21_xpro board (SAM R21).
+ * It mirrors app/boards/nucleo_f302r8.overlay using the on-board
+ * button (SW0 / PA28) and LED (LED0 / PA19) from
+ * zephyr/boards/atmel/sam0/samr21_xpro/samr21_xpro.dts.
+ */
+
+/ {
+	example_sensor: example-sensor {
+		compatible = "zephyr,example-sensor";
+		input-gpios = <&porta 28 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+	};
+
+	blink_led: blink-led {
+		compatible = "blink-gpio-led";
+		led-gpios = <&porta 19 GPIO_ACTIVE_LOW>;
+		blink-period-ms = <1000>;
+	};
+};
