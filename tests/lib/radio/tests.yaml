@@ -1,13 +1,33 @@
+# This file is provided so that the application can be compiled using Twister,
+# the Zephyr testing tool. In this file, multiple combinations can be specified,
+# so that you can easily test all of them locally or in CI.
 common:
   tags:
     - radio
     - sensor_frame
-    - unit
-  type: unit
 
 tests:
+  # Host build: plain x86-64 executable, sub-second. Fast, but blind to
+  # misaligned access (x86 tolerates it). CI runs this one.
   lib.radio.sensor_frame:
+    type: unit
+    tags:
+      - unit
     # The unittest component defaults to -m32; the host here has no 32-bit
     # libgcc. Build the host binary 64-bit instead.
     extra_args:
       - M64_MODE=1
+
+  # On-target build: the same golden vectors on the Cortex-M0+, where a
+  # misaligned access hard-faults. Needs a board on a serial port:
+  #   west build -b samr21_xpro tests/lib/radio
+  #   pyocd flash -t atsamr21g18a -e sector build/zephyr/zephyr.bin
+  #   twister -p samr21_xpro -T tests/lib/radio --device-testing \
+  #           --device-serial /dev/ttyACM1
+  lib.radio.sensor_frame.on_target:
+    platform_allow:
+      - samr21_xpro
+    integration_platforms:
+      - samr21_xpro
+    tags:
+      - on_target

@@ -6,6 +6,8 @@
 
 #include <errno.h>
 
+#include <zephyr/sys/byteorder.h>
+
 #include <app/lib/sensor_frame.h>
 
 /*
@@ -36,42 +38,16 @@
 #define FCF_VERSION_RESERVED 3U
 
 /*
- * Byte-wise little-endian read/write helpers.
+ * Byte-wise little-endian accessors from <zephyr/sys/byteorder.h>:
+ * sys_get_le16()/sys_get_le32() and sys_put_le16()/sys_put_le32().
  *
- * We do *not* cast the buffer pointer to (uint16_t *) or (uint32_t *)
- * because:
- *  1) The buffer may be unaligned -- dereferencing a misaligned pointer is
- *     undefined behaviour in C and causes a HardFault on Cortex-M0+.
- *  2) The on-wire byte order (little-endian) must be explicit regardless of
- *     the host CPU's native endianness, so this code is portable.
- *  3) A byte-wise copy compiles to a handful of load/store instructions on
- *     any ARM target, with no risk of the compiler generating an unaligned
- *     access or depending on struct padding.
+ * These are the buffer-level accessors. Do not swap in sys_cpu_to_le16() /
+ * sys_le16_to_cpu(): those are host-endianness value macros (a no-op on a
+ * little-endian target) that say nothing about storage, and pairing them with
+ * a (uint16_t *) cast of the buffer is undefined behaviour on an unaligned
+ * address. sys_*_le* are byte-wise, so they are alignment-safe on the
+ * Cortex-M0+ and always emit/parse the on-wire little-endian order.
  */
-static uint16_t rd_le16(const uint8_t *p)
-{
-	return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
-}
-
-static void wr_le16(uint8_t *p, uint16_t v)
-{
-	p[0] = (uint8_t)v;
-	p[1] = (uint8_t)(v >> 8);
-}
-
-static uint32_t rd_le32(const uint8_t *p)
-{
-	return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
-	       ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-
-static void wr_le32(uint8_t *p, uint32_t v)
-{
-	p[0] = (uint8_t)v;
-	p[1] = (uint8_t)(v >> 8);
-	p[2] = (uint8_t)(v >> 16);
-	p[3] = (uint8_t)(v >> 24);
-}
 
 int sensor_frame_encode(uint8_t *buf, size_t cap,
 			const struct sensor_frame_cfg *cfg,
@@ -99,46 +75,55 @@ int sensor_frame_encode(uint8_t *buf, size_t cap,
 	}
 
 	/* Mandatory header: FCF, sequence number, dst PAN, dst addr, src addr. */
-	wr_le16(&buf[0], fcf);
+	sys_put_le16(fcf, &buf[0]);
 	buf[2] = cfg->mac_seq;
-	wr_le16(&buf[3], cfg->pan_id);
-	wr_le16(&buf[5], cfg->dst_short_addr);
-	wr_le16(&buf[7], cfg->src_short_addr);
+	sys_put_le16(cfg->pan_id, &buf[3]);
+	sys_put_le16(cfg->dst_short_addr, &buf[5]);
+	sys_put_le16(cfg->src_short_addr, &buf[7]);
 
-	/* 18-byte application payload, little-endian, byte-wise (no unaligned
-	 * word accesses: the target is a Cortex-M0+).
+	/* 18-byte application payload, little-endian (sys_put_le* is byte-wise,
+	 * so no unaligned word accesses: the target is a Cortex-M0+).
 	 */
 	p = &buf[SENSOR_FRAME_HEADER_LEN];
 	p[0] = reading->node_id;
-	wr_le16(&p[1], reading->seq);
-	wr_le16(&p[3], reading->light);
-	wr_le16(&p[5], (uint16_t)reading->temp_c_x100);
-	wr_le16(&p[7], (uint16_t)reading->accel[0]);
-	wr_le16(&p[9], (uint16_t)reading->accel[1]);
-	wr_le16(&p[11], (uint16_t)reading->accel[2]);
-	wr_le32(&p[13], reading->uptime_ms);
+	sys_put_le16(reading->seq, &p[1]);
+	sys_put_le16(reading->light, &p[3]);
+	sys_put_le16((uint16_t)reading->temp_c_x100, &p[5]);
+	sys_put_le16((uint16_t)reading->accel[0], &p[7]);
+	sys_put_le16((uint16_t)reading->accel[1], &p[9]);
+	sys_put_le16((uint16_t)reading->accel[2], &p[11]);
+	sys_put_le32(reading->uptime_ms, &p[13]);
 	p[17] = reading->flags;
 
 	return (int)SENSOR_FRAME_LEN;
 }
 
-/**
- * Compute the MAC header length of a data frame, or return a negative errno.
- * Handles both short (2-byte) and extended (8-byte) addresses and PAN ID
- * compression, so the decoder is not limited to the exact v1 encoder profile.
- */
-static int mac_header_len(const uint8_t *psdu, size_t len, size_t *hdr_len)
+/* Address width for a present (non-NONE, non-RESERVED) addressing mode. */
+static size_t addr_len(uint8_t mode)
 {
+	return (mode == ADDR_MODE_SHORT) ? 2U : 8U;
+}
+
+/**
+ * Parse a data frame's MAC header into @p meta. Handles both short (2-byte)
+ * and extended (8-byte) addresses and PAN ID compression, so callers see the
+ * same header shape the decoder accepts. Returns 0 only when the header is a
+ * supported 802.15.4 data frame and is fully present in @p len bytes.
+ */
+static int parse_header(const uint8_t *psdu, size_t len,
+			struct sensor_frame_meta *meta)
+{
+	struct sensor_frame_meta m = { 0 };
 	uint16_t fcf;
 	uint8_t version, dst_mode, src_mode;
 	bool pan_comp;
-	size_t hdr;
+	size_t off;
 
-	if (len < 3U) {
+	if (psdu == NULL || meta == NULL || len < 3U) {
 		return -EINVAL;
 	}
 
-	fcf = rd_le16(psdu);
+	fcf = sys_get_le16(psdu);
 
 	if ((fcf & FCF_TYPE_MASK) != FCF_TYPE_DATA) {
 		return -EINVAL;
@@ -163,32 +148,75 @@ static int mac_header_len(const uint8_t *psdu, size_t len, size_t *hdr_len)
 
 	pan_comp = (fcf & FCF_PAN_COMPRESS) != 0U;
 
-	hdr = 2U /* FCF */ + 1U /* sequence number */;
+	m.fcf = fcf;
+	m.mac_seq = psdu[2];
+	m.dst_mode = dst_mode;
+	m.src_mode = src_mode;
+	m.pan_compressed = pan_comp;
+
+	off = 2U /* FCF */ + 1U /* sequence number */;
 
 	if (dst_mode != ADDR_MODE_NONE) {
-		hdr += 2U; /* destination PAN */
-		hdr += (dst_mode == ADDR_MODE_SHORT) ? 2U : 8U;
+		size_t alen = addr_len(dst_mode);
+
+		if (len < off + 2U + alen) {
+			return -EINVAL;
+		}
+		m.dst_pan_id = sys_get_le16(&psdu[off]);
+		m.has_dst_pan = true;
+		off += 2U;
+
+		if (dst_mode == ADDR_MODE_SHORT) {
+			m.dst_short_addr = sys_get_le16(&psdu[off]);
+			m.dst_is_short = true;
+		}
+		off += alen;
 	}
 
 	if (src_mode != ADDR_MODE_NONE) {
+		size_t alen = addr_len(src_mode);
+		size_t need = alen;
+
 		/* Source PAN is present unless it is compressed away together
 		 * with a present destination address.
 		 */
 		if (!(pan_comp && dst_mode != ADDR_MODE_NONE)) {
-			hdr += 2U;
+			need += 2U;
 		}
-		hdr += (src_mode == ADDR_MODE_SHORT) ? 2U : 8U;
+		if (len < off + need) {
+			return -EINVAL;
+		}
+		if (need != alen) {
+			m.src_pan_id = sys_get_le16(&psdu[off]);
+			m.has_src_pan = true;
+			off += 2U;
+		}
+
+		if (src_mode == ADDR_MODE_SHORT) {
+			m.src_short_addr = sys_get_le16(&psdu[off]);
+			m.src_is_short = true;
+		}
+		off += alen;
 	}
 
-	*hdr_len = hdr;
+	m.payload_off = off;
+	m.payload_len = len - off;
+	*meta = m;
 
 	return 0;
 }
 
-int sensor_frame_decode(const uint8_t *psdu, size_t len,
-			struct sensor_reading *out)
+int sensor_frame_parse_header(const uint8_t *psdu, size_t len,
+			      struct sensor_frame_meta *meta)
 {
-	size_t hdr;
+	return parse_header(psdu, len, meta);
+}
+
+int sensor_frame_decode_meta(const uint8_t *psdu, size_t len,
+			     struct sensor_reading *out,
+			     struct sensor_frame_meta *meta)
+{
+	struct sensor_frame_meta m;
 	const uint8_t *p;
 	int ret;
 
@@ -196,7 +224,7 @@ int sensor_frame_decode(const uint8_t *psdu, size_t len,
 		return -EINVAL;
 	}
 
-	ret = mac_header_len(psdu, len, &hdr);
+	ret = parse_header(psdu, len, &m);
 	if (ret < 0) {
 		return ret;
 	}
@@ -204,21 +232,31 @@ int sensor_frame_decode(const uint8_t *psdu, size_t len,
 	/* !SENSOR_PAYLOAD_LEN means either a foreign/short frame or an FCS that
 	 * was not stripped; drop it either way.
 	 */
-	if (len != hdr + SENSOR_PAYLOAD_LEN) {
+	if (m.payload_len != SENSOR_PAYLOAD_LEN) {
 		return -EINVAL;
 	}
 
-	p = &psdu[hdr];
+	if (meta != NULL) {
+		*meta = m;
+	}
+
+	p = &psdu[m.payload_off];
 
 	out->node_id = p[0];
-	out->seq = rd_le16(&p[1]);
-	out->light = rd_le16(&p[3]);
-	out->temp_c_x100 = (int16_t)rd_le16(&p[5]);
-	out->accel[0] = (int16_t)rd_le16(&p[7]);
-	out->accel[1] = (int16_t)rd_le16(&p[9]);
-	out->accel[2] = (int16_t)rd_le16(&p[11]);
-	out->uptime_ms = rd_le32(&p[13]);
+	out->seq = sys_get_le16(&p[1]);
+	out->light = sys_get_le16(&p[3]);
+	out->temp_c_x100 = (int16_t)sys_get_le16(&p[5]);
+	out->accel[0] = (int16_t)sys_get_le16(&p[7]);
+	out->accel[1] = (int16_t)sys_get_le16(&p[9]);
+	out->accel[2] = (int16_t)sys_get_le16(&p[11]);
+	out->uptime_ms = sys_get_le32(&p[13]);
 	out->flags = p[17];
 
 	return 0;
+}
+
+int sensor_frame_decode(const uint8_t *psdu, size_t len,
+			struct sensor_reading *out)
+{
+	return sensor_frame_decode_meta(psdu, len, out, NULL);
 }

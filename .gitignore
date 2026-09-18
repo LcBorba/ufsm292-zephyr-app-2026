@@ -10,6 +10,10 @@
 /build*
 /twister-out*
 
+# project-local binaries (edbg drop-in for test-radio-link.sh --flasher edbg)
+/local-tools/*
+!/local-tools/README.md
+
 # local reference datasheets (not tracked)
 datasheets/
 

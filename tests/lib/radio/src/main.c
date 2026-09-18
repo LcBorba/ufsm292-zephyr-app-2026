@@ -17,6 +17,7 @@
 #include <zephyr/ztest.h>
 
 #include <app/lib/sensor_frame.h>
+#include <app/lib/radio_test_pattern.h>
 
 /*
  * Golden v1 frame. This is the wire contract between the sensor nodes and the
@@ -568,3 +569,176 @@ ZTEST(sensor_frame, test_decode_payload_field_isolation)
 }
 
 ZTEST_SUITE(sensor_frame, NULL, NULL, NULL, NULL, NULL);
+
+/* --- Header parsing / classification support --------------------------- */
+
+ZTEST(sensor_frame, test_parse_header_golden)
+{
+	struct sensor_frame_meta m;
+
+	zassert_ok(sensor_frame_parse_header(golden_frame, sizeof(golden_frame),
+					     &m), "parse failed");
+	zassert_equal(m.mac_seq, 0x07, "mac_seq");
+	zassert_true(m.has_dst_pan, "dst PAN missing");
+	zassert_equal(m.dst_pan_id, 0x1234, "dst PAN");
+	zassert_true(m.dst_is_short, "dst not short");
+	zassert_equal(m.dst_short_addr, 0xFFFF, "dst addr");
+	zassert_true(m.src_is_short, "src not short");
+	zassert_equal(m.src_short_addr, 0x0001, "src addr");
+	zassert_equal(m.payload_off, SENSOR_FRAME_HEADER_LEN, "payload offset");
+	zassert_equal(m.payload_len, SENSOR_PAYLOAD_LEN, "payload length");
+}
+
+ZTEST(sensor_frame, test_parse_header_extended_dst)
+{
+	uint8_t frame[SENSOR_FRAME_LEN + 6] = { 0 };
+	struct sensor_frame_meta m;
+	size_t i;
+
+	/* FCF: data, v2006, PAN compress, ext dst + short src = 0x9C41. */
+	frame[0] = 0x41;
+	frame[1] = 0x9C;
+	frame[2] = 0x07;
+	frame[3] = 0x34;
+	frame[4] = 0x12;
+	for (i = 5; i < 13; i++) {
+		frame[i] = (uint8_t)i;
+	}
+	frame[13] = 0x01;
+	frame[14] = 0x00;
+
+	zassert_ok(sensor_frame_parse_header(frame, sizeof(frame), &m),
+		   "parse failed");
+	zassert_false(m.dst_is_short, "extended dst reported as short");
+	zassert_true(m.src_is_short, "src not short");
+	zassert_equal(m.src_short_addr, 0x0001, "src addr");
+	zassert_equal(m.payload_off, 15, "payload offset");
+	zassert_equal(m.payload_len, SENSOR_PAYLOAD_LEN, "payload length");
+}
+
+ZTEST(sensor_frame, test_parse_header_rejects_non_data)
+{
+	struct sensor_frame_meta m;
+	uint8_t bad[SENSOR_FRAME_LEN];
+
+	memcpy(bad, golden_frame, sizeof(bad));
+	bad[0] = 0x00; /* beacon, not data */
+	zassert_equal(sensor_frame_parse_header(bad, sizeof(bad), &m), -EINVAL,
+		      "non-data frame parsed");
+
+	zassert_equal(sensor_frame_parse_header(NULL, sizeof(golden_frame), &m),
+		      -EINVAL, "NULL psdu accepted");
+	zassert_equal(sensor_frame_parse_header(golden_frame,
+						sizeof(golden_frame), NULL),
+		      -EINVAL, "NULL meta accepted");
+
+	/* Header shorter than the FCF + seq minimum. */
+	zassert_equal(sensor_frame_parse_header(golden_frame, 2, &m), -EINVAL,
+		      "truncated header parsed");
+}
+
+ZTEST(sensor_frame, test_decode_meta_reports_header)
+{
+	struct sensor_reading out;
+	struct sensor_frame_meta m;
+
+	zassert_ok(sensor_frame_decode_meta(golden_frame, sizeof(golden_frame),
+					    &out, &m), "decode failed");
+	zassert_equal(m.mac_seq, 0x07, "mac_seq");
+	zassert_equal(m.src_short_addr, 0x0001, "src addr");
+	assert_reading_eq(&out, &golden_reading);
+
+	/* A wrong payload length fails decode but must still parse as a header:
+	 * that is exactly how the RX path tells "foreign" from "malformed". */
+	zassert_equal(sensor_frame_decode_meta(golden_frame,
+						sizeof(golden_frame) - 1,
+						&out, &m), -EINVAL,
+		      "short payload decoded");
+	zassert_ok(sensor_frame_parse_header(golden_frame,
+					     sizeof(golden_frame) - 1, &m),
+		   "header should still parse");
+	zassert_equal(m.payload_len, SENSOR_PAYLOAD_LEN - 1, "payload length");
+}
+
+/* --- Deterministic test pattern ---------------------------------------- */
+
+ZTEST(radio_test_pattern, test_golden_values)
+{
+	struct sensor_reading r;
+
+	radio_test_pattern_fill(0, 7, &r);
+	zassert_equal(r.node_id, 7, "node");
+	zassert_equal(r.seq, 0, "seq");
+	zassert_equal(r.light, 12345, "light seq0");
+	zassert_equal(r.temp_c_x100, 1800, "temp seq0");
+	zassert_equal(r.accel[0], (int16_t)40000, "ax seq0");
+	zassert_equal(r.accel[1], (int16_t)30000, "ay seq0");
+	zassert_equal(r.accel[2], (int16_t)20000, "az seq0");
+	zassert_equal(r.flags, 0, "flags seq0");
+
+	radio_test_pattern_fill(1, 7, &r);
+	zassert_equal(r.light, 52848, "light seq1");
+	zassert_equal(r.temp_c_x100, 1801, "temp seq1");
+	zassert_equal(r.accel[0], (int16_t)40003, "ax seq1");
+	zassert_equal(r.flags, 1, "flags seq1");
+
+	radio_test_pattern_fill(256, 2, &r);
+	zassert_equal(r.node_id, 2, "node seq256");
+	zassert_equal(r.light, 26425, "light seq256");
+	zassert_equal(r.temp_c_x100, 2056, "temp seq256");
+	zassert_equal(r.accel[0], (int16_t)40768, "ax seq256");
+	zassert_equal(r.flags, 1, "flags seq256");
+
+	radio_test_pattern_fill(65535, 1, &r);
+	zassert_equal(r.light, 37378, "light seq65535");
+	zassert_equal(r.temp_c_x100, 1935, "temp seq65535");
+	zassert_equal(r.accel[0], (int16_t)39997, "ax seq65535");
+	zassert_equal(r.accel[1], (int16_t)29995, "ay seq65535");
+	zassert_equal(r.accel[2], (int16_t)19993, "az seq65535");
+	zassert_equal(r.flags, 0, "flags seq65535");
+}
+
+ZTEST(radio_test_pattern, test_varies_with_seq)
+{
+	uint16_t prev_light = 0;
+	int s;
+
+	for (s = 0; s < 16; s++) {
+		struct sensor_reading r;
+
+		radio_test_pattern_fill((uint16_t)s, 1, &r);
+		zassert_equal(r.seq, (uint16_t)s, "seq not stamped");
+		if (s > 0) {
+			zassert_not_equal(r.light, prev_light,
+					  "light stuck at seq %d", s);
+		}
+		prev_light = r.light;
+	}
+}
+
+ZTEST(radio_test_pattern, test_survives_codec)
+{
+	struct sensor_frame_cfg cfg = {
+		.pan_id = 0xCAFE,
+		.dst_short_addr = 0xFFFF,
+		.src_short_addr = 1,
+	};
+	uint8_t buf[SENSOR_FRAME_LEN];
+	int s;
+
+	for (s = 0; s < 64; s++) {
+		struct sensor_reading in, out;
+
+		radio_test_pattern_fill((uint16_t)s, 1, &in);
+		in.uptime_ms = 1000U + (uint32_t)s;
+		cfg.mac_seq = (uint8_t)s;
+
+		zassert_equal(sensor_frame_encode(buf, sizeof(buf), &cfg, &in),
+			      SENSOR_FRAME_LEN, "encode seq %d", s);
+		zassert_ok(sensor_frame_decode(buf, sizeof(buf), &out),
+			   "decode seq %d", s);
+		assert_reading_eq(&out, &in);
+	}
+}
+
+ZTEST_SUITE(radio_test_pattern, NULL, NULL, NULL, NULL, NULL);

@@ -25,8 +25,11 @@ extern "C" {
  *
  * Shared by the sensor nodes (encode + transmit) and the gateway (receive +
  * decode), so the on-air format is defined in exactly one place. The codec is
- * pure C: it does not depend on Zephyr, the radio driver or the network stack,
- * which keeps it unit-testable on any host.
+ * self-contained: no kernel, devicetree, driver or network-stack calls, only
+ * <zephyr/sys/byteorder.h> for the little-endian accessors. `tests/lib/radio`
+ * compiles this very translation unit into a host binary via Zephyr's
+ * `unittest` component, which is what keeps the on-air format pinned by golden
+ * vectors and makes the format cheap to change on both ends at once.
  */
 
 /** Application payload length fixed by `gateway/AGENTS.md`. */
@@ -111,6 +114,70 @@ int sensor_frame_encode(uint8_t *buf, size_t cap,
  */
 int sensor_frame_decode(const uint8_t *psdu, size_t len,
 			struct sensor_reading *out);
+
+/**
+ * @brief Parsed 802.15.4 MAC header of a received frame.
+ *
+ * Filled by sensor_frame_parse_header() / sensor_frame_decode_meta(). Only
+ * the fields that are actually present in the frame are set; address fields
+ * for extended (non-short) addresses are left at 0 and the matching
+ * `*_is_short` flag is false. This lets a receiver tell "a valid 802.15.4
+ * data frame that is not ours" (foreign traffic) apart from "not a valid
+ * frame at all" (malformed/corrupt) without re-parsing the header itself.
+ */
+struct sensor_frame_meta {
+	uint16_t fcf;             /**< Frame Control field, host byte order. */
+	uint8_t  mac_seq;         /**< Sequence number. */
+	uint8_t  dst_mode;        /**< Destination address mode (FCF bits 10-11). */
+	uint8_t  src_mode;        /**< Source address mode (FCF bits 14-15). */
+	bool     pan_compressed;  /**< PAN ID compression bit set. */
+	bool     has_dst_pan;     /**< Destination PAN field is present. */
+	bool     has_src_pan;     /**< Source PAN field is present. */
+	bool     dst_is_short;    /**< Destination address is 2-byte short. */
+	bool     src_is_short;    /**< Source address is 2-byte short. */
+	uint16_t dst_pan_id;      /**< Destination PAN, 0 when absent. */
+	uint16_t src_pan_id;      /**< Source PAN, 0 when absent. */
+	uint16_t dst_short_addr;  /**< Destination short address, 0 if not short. */
+	uint16_t src_short_addr;  /**< Source short address, 0 if not short. */
+	size_t   payload_off;     /**< Offset of the MAC payload. */
+	size_t   payload_len;     /**< Length of the MAC payload. */
+};
+
+/**
+ * @brief Parse only the MAC header of a received 802.15.4 data frame.
+ *
+ * Same validation as sensor_frame_decode() (data frame, no security,
+ * supported frame version and addressing modes, header fully present) but
+ * does **not** require the payload to be an 18-byte sensor payload. Use it
+ * to classify frames the decoder rejects: a frame whose header parses is a
+ * real 802.15.4 data frame (possibly from another PAN), while a frame whose
+ * header does not parse is malformed or not 802.15.4 at all.
+ *
+ * @param psdu Received PSDU (header + payload, FCS already removed).
+ * @param len  Length of @p psdu in bytes.
+ * @param meta Filled with the parsed header (must not be NULL).
+ *
+ * @retval 0 Success.
+ * @retval -EINVAL @p psdu or @p meta is NULL, the header is incomplete, or
+ *                 the frame is not a supported 802.15.4 data frame.
+ */
+int sensor_frame_parse_header(const uint8_t *psdu, size_t len,
+			      struct sensor_frame_meta *meta);
+
+/**
+ * @brief Decode like sensor_frame_decode() and also return the MAC header.
+ *
+ * @param psdu Received PSDU (header + payload, FCS already removed).
+ * @param len  Length of @p psdu in bytes.
+ * @param out  Decoded payload (must not be NULL).
+ * @param meta Filled with the parsed header, or NULL if not needed.
+ *
+ * @retval 0 Success.
+ * @retval -EINVAL As sensor_frame_decode().
+ */
+int sensor_frame_decode_meta(const uint8_t *psdu, size_t len,
+			     struct sensor_reading *out,
+			     struct sensor_frame_meta *meta);
 
 /** @} */
 
