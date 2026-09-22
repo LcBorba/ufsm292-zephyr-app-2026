@@ -10,7 +10,7 @@
 /build*
 /twister-out*
 
-# project-local binaries (edbg drop-in for test-radio-link.sh --flasher edbg)
+# project-local binaries (e.g. an edbg drop-in for flashing SAM R21 boards)
 /local-tools/*
 !/local-tools/README.md
 

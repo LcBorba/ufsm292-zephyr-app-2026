@@ -8,33 +8,3 @@ config RADIO
 	  nodes (encode + transmit) and the gateway (receive + decode). The
 	  on-air format is the 18-byte payload defined in gateway/AGENTS.md
 	  carried in a proper 802.15.4 MAC data frame; see gateway/radio-plan.md.
-
-if IEEE802154_RAW_MODE
-
-config RADIO_TESTBED_RING
-	bool "Per-frame ring buffer in the raw-mode RX testbed"
-	default y
-	help
-	  Keeps the last CONFIG_RADIO_TESTBED_RING_SIZE received frames on the
-	  target so per-frame RSSI/LQI/payload data survives the UART and can be
-	  pulled out in bulk with the `dump` console command. Disable on the TX
-	  image (which never consumes the ring) to save the SRAM.
-
-config RADIO_TESTBED_RING_SIZE
-	int "Number of per-frame records kept"
-	depends on RADIO_TESTBED_RING
-	range 16 512
-	default 128
-	help
-	  At the testbed's default 1 Hz this is minutes of history; if you raise
-	  the TX rate, dump more often or raise this. A record is ~24 bytes.
-
-config RADIO_TESTBED_FRAME_LOG
-	bool "Log every received frame"
-	default y
-	help
-	  One log line per valid frame (the live monitor comparison path). Turn
-	  off for high-rate or bulk runs: the per-frame data still lands in the
-	  ring buffer and is exported on demand, but the UART stays free.
-
-endif # IEEE802154_RAW_MODE

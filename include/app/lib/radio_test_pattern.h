@@ -22,13 +22,12 @@ extern "C" {
  *
  * @brief Fill a sensor reading from a repeatable pattern keyed by sequence.
  *
- * The link testbed must not send a constant payload: a stuck or mis-mapped
- * field would look healthy. Both ends of the bench (the TX image and the
- * Python monitor in `test-radio-link.sh`) can reproduce this pattern from the
- * application `seq` alone, so the monitor verifies the received payload
- * against an *independently computed* expectation instead of trusting the TX
- * log. Keeping the formula here, unit-tested with golden vectors, makes the
- * C and Python copies a checked contract rather than folklore.
+ * A sender must not transmit a constant payload: a stuck or mis-mapped
+ * field would look healthy. Any receiver can reproduce this pattern from
+ * the application `seq` alone, so received payloads can be verified
+ * against an *independently computed* expectation instead of trusting the
+ * sender's log. Keeping the formula here, unit-tested with golden vectors,
+ * makes the two copies a checked contract rather than folklore.
  *
  * The pattern is, with `s = (uint32_t)seq` and every narrow value taken
  * modulo 2^N then reinterpreted as two's complement for signed fields:

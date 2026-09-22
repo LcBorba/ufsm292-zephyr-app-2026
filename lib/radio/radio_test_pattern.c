@@ -7,9 +7,8 @@
 #include <app/lib/radio_test_pattern.h>
 
 /*
- * Pure C, no Zephyr dependencies: shared by the sensor/testbed images and
- * pinned by the host unit tests. See radio_test_pattern.h for the formula,
- * which the Python monitor in test-radio-link.sh mirrors.
+ * Pure C, no Zephyr dependencies: used by sensor senders and pinned by the
+ * host unit tests. See radio_test_pattern.h for the formula.
  */
 void radio_test_pattern_fill(uint16_t seq, uint8_t node_id,
 			     struct sensor_reading *reading)
