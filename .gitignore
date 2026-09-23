@@ -10,6 +10,13 @@
 /build*
 /twister-out*
 
+# project-local binaries (e.g. an edbg drop-in for flashing SAM R21 boards)
+/local-tools/*
+!/local-tools/README.md
+
+# local reference datasheets (not tracked)
+datasheets/
+
 __pycache__/
 
 # docs
