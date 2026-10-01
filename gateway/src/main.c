@@ -22,6 +22,7 @@
 #include <zephyr/net/ieee802154_radio.h>
 
 #include <app/lib/sensor_frame.h>
+#include <app/gateway/memory_table.h>
 
 #include <zephyr/app_version.h>
 
@@ -35,6 +36,7 @@ static const struct device *const radio =
 
 static uint32_t rx_ok;
 static uint32_t rx_other;
+static struct gateway_memory gateway_memory;
 
 /*
  * Called by the rf2xx driver RX thread for every received frame. Runs in
@@ -54,6 +56,15 @@ int net_recv_data(struct net_if *iface, struct net_pkt *pkt)
 	frag = net_buf_frag_last(pkt->buffer);
 	if (frag != NULL && sensor_frame_decode(frag->data, frag->len, &r) == 0) {
 		rx_ok++;
+                gateway_memory_update(&gateway_memory, &r, k_uptime_get_32());
+
+                struct gateway_memory_entry entry;
+                if (gateway_memory_get(&gateway_memory, r.node_id, &entry) == 0) {
+                        printk("memory node=%u seq=%u received_at=%u ms\n",
+                               entry.reading.node_id,
+                               entry.reading.seq,
+                               entry.received_at_ms);
+                }
 		printk("rx node=%u seq=%u light=%u temp_c_x100=%d "
 		       "accel=%d,%d,%d uptime=%u flags=%u\n",
 		       r.node_id, r.seq, r.light, r.temp_c_x100,
@@ -71,6 +82,7 @@ int main(void)
 {
 	const struct ieee802154_radio_api *api;
 	int ret;
+        gateway_memory_init(&gateway_memory);
 
 	printk("Gateway %s (samr21_xpro, ch %d, pan 0x%04x, promiscuous)\n",
 	       APP_VERSION_STRING, GW_CHANNEL, GW_PAN_ID);
