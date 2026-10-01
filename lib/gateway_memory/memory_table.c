@@ -22,13 +22,31 @@ int gateway_memory_update(struct gateway_memory *memory,
                           const struct sensor_reading *reading,
                           uint32_t received_at_ms)
 {
+        struct gateway_memory_entry *slot = NULL;
+
         if (memory == NULL || reading == NULL) {
                 return -EINVAL;
         }
 
-        memory->entries[reading->node_id].valid = true;
-        memory->entries[reading->node_id].reading = *reading;
-        memory->entries[reading->node_id].received_at_ms = received_at_ms;
+        for (size_t i = 0; i < GATEWAY_MEMORY_MAX_NODES; i++) {
+                struct gateway_memory_entry *candidate = &memory->entries[i];
+
+                if (candidate->valid && candidate->reading.node_id == reading->node_id) {
+                        slot = candidate;
+                        break;
+                }
+                if (!candidate->valid && slot == NULL) {
+                        slot = candidate;
+                }
+        }
+
+        if (slot == NULL) {
+                return -ENOSPC;
+        }
+
+        slot->reading = *reading;
+        slot->received_at_ms = received_at_ms;
+        slot->valid = true;
 
         return 0;
 }
@@ -41,11 +59,12 @@ int gateway_memory_get(struct gateway_memory *memory,
                 return -EINVAL;
         }
 
-        if (!memory->entries[node_id].valid) {
-                return -ENOENT;
+        for (size_t i = 0; i < GATEWAY_MEMORY_MAX_NODES; i++) {
+                if (memory->entries[i].valid && memory->entries[i].reading.node_id == node_id) {
+                        *entry = memory->entries[i];
+                        return 0;
+                }
         }
 
-        *entry = memory->entries[node_id];
-
-        return 0;
+        return -ENOENT;
 }

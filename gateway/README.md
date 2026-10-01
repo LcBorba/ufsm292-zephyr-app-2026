@@ -80,3 +80,31 @@ it into a message queue or mutex-protected shared state for an HTTP server or
 other thread rather than retaining its pointer. Memory table access from other
 threads requires synchronization. HTTP service setup
 is not implemented by this example.
+
+## RAM budget
+
+The memory table holds the latest reading for up to 16 distinct nodes, using
+512 bytes on SAM R21. Slots are searched by node ID, so IDs 0 through 255
+remain valid. A new node is rejected with `-ENOSPC` when all slots are occupied;
+existing nodes can still update. The RX handler logs failed updates and still
+prints each received reading to the console. Entries remain until table reset.
+
+The shared network data pools explicitly use eight RX and eight TX buffers,
+each with 128 bytes of payload capacity. Packet descriptor counts remain eight
+RX and two TX. Compared with the 256-entry table and sixteen buffers per data
+pool, these settings save 10176 bytes on the current SAM R21 build. Ethernet and
+HTTP traffic share these finite pools: validate concurrent radio traffic and
+HTTP requests before treating these counts as final.
+
+The planned HTTP API is:
+
+- `GET /sensors`: latest reading for every stored node, encoded as JSON.
+- `GET /health`: status, uptime, and online node count.
+- `POST /reset`: restart the gateway for recovery.
+
+Budget a bounded JSON output buffer and emit the sensor list incrementally,
+rather than reserving a full-response buffer. Copy readings under a lock, then
+release it before network I/O. If a consistent whole-table snapshot is needed,
+budget another 512 bytes for that snapshot. Define an age threshold for online
+nodes separately from table occupancy. HTTP, TCP, Ethernet, synchronized table
+reads, and these endpoints still need integration and a separate RAM check.

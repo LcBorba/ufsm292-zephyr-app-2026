@@ -149,6 +149,40 @@ ZTEST(gateway_memory, test_node_id_boundaries)
         zassert_equal(entry.reading.seq, 2, "wrong node 255 data");
 }
 
+ZTEST(gateway_memory, test_full_table)
+{
+        struct sensor_reading reading = { .node_id = 255, .seq = 1 };
+        struct gateway_memory_entry entry;
+
+        zassert_ok(gateway_memory_update(&memory, &reading, 100));
+        for (size_t i = 0; i < GATEWAY_MEMORY_MAX_NODES - 1; i++) {
+                reading.node_id = i;
+                zassert_ok(gateway_memory_update(&memory, &reading, 100));
+        }
+
+        reading.node_id = 200;
+        zassert_equal(gateway_memory_update(&memory, &reading, 200), -ENOSPC);
+        zassert_equal(gateway_memory_get(&memory, 200, &entry), -ENOENT);
+
+        reading.node_id = 255;
+        reading.seq = 2;
+        zassert_ok(gateway_memory_update(&memory, &reading, 300));
+        zassert_ok(gateway_memory_get(&memory, 255, &entry));
+        zassert_equal(entry.reading.seq, 2);
+        zassert_equal(entry.received_at_ms, 300);
+        for (size_t i = 0; i < GATEWAY_MEMORY_MAX_NODES - 1; i++) {
+                zassert_ok(gateway_memory_get(&memory, i, &entry));
+                zassert_equal(entry.reading.seq, 1);
+                zassert_equal(entry.received_at_ms, 100);
+        }
+
+        gateway_memory_init(&memory);
+        reading.node_id = 200;
+        zassert_ok(gateway_memory_update(&memory, &reading, 400));
+        zassert_ok(gateway_memory_get(&memory, 200, &entry));
+        zassert_equal(gateway_memory_get(&memory, 255, &entry), -ENOENT);
+}
+
 ZTEST(gateway_memory, test_null_arguments)
 {
         struct sensor_reading reading = { 0 };

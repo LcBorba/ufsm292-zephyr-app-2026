@@ -45,8 +45,12 @@ static K_SEM_DEFINE(rx_ready, 0, 1);
 static void handle_sensor_reading(const struct sensor_reading *r)
 {
 	struct gateway_memory_entry entry;
+	int ret;
 
-	gateway_memory_update(&gateway_memory, r, k_uptime_get_32());
+	ret = gateway_memory_update(&gateway_memory, r, k_uptime_get_32());
+	if (ret < 0) {
+		LOG_WRN("Memory update for node %u failed (%d)", r->node_id, ret);
+	}
 	if (gateway_memory_get(&gateway_memory, r->node_id, &entry) == 0) {
 		printk("memory node=%u seq=%u received_at=%u ms\n",
 		       entry.reading.node_id, entry.reading.seq,
