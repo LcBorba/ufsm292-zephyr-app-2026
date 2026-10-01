@@ -108,3 +108,31 @@ release it before network I/O. If a consistent whole-table snapshot is needed,
 budget another 512 bytes for that snapshot. Define an age threshold for online
 nodes separately from table occupancy. HTTP, TCP, Ethernet, synchronized table
 reads, and these endpoints still need integration and a separate RAM check.
+
+## Request data helpers
+
+`gateway_memory_get_all()` copies valid entries into a caller-owned array and
+returns the entry count. Allocate `GATEWAY_MEMORY_MAX_NODES` entries (512 bytes
+on SAM R21) for a complete snapshot. A smaller array returns `-ENOSPC` without
+writing a partial result. Entries are in slot order, not sorted by node ID;
+stale readings remain in the snapshot for `/sensors`.
+
+`gateway_memory_get_stats()` walks all slots and returns `valid_nodes` and
+`online_nodes` for `/health`. Pass gateway uptime from `k_uptime_get_32()` and
+an online timeout chosen from the expected sensor reporting interval. A node
+is online when the elapsed time since its last reception is less than or equal
+to that timeout. Receiving another reading makes a stale node online again;
+the helper does not remove stale entries or free their slots.
+
+Both helpers allocate no heap memory. Serialize their calls with updates using
+the same lock, then encode/send the copied data after releasing that lock.
+Unsigned 32-bit elapsed time works across an uptime wrap when reception age
+is less than 2^32 milliseconds (about 49.7 days). Longer retained ages require
+wider timestamps or an explicit expiration policy to avoid wrap ambiguity.
+The single-node `gateway_memory_get()` API is unchanged.
+
+The five-second cumulative gateway log includes `stored` (valid table entries)
+and `active` (online nodes). `CONFIG_GATEWAY_NODE_ONLINE_TIMEOUT_MS` defaults to
+30000 ms and controls the active check. Table updates and statistics reads use
+`gateway_memory_lock`; future request handlers must use that same lock. Console
+output happens after releasing it, so printing does not hold up table readers.

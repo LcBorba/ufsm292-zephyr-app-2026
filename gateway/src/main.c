@@ -40,18 +40,24 @@ static atomic_t rx_ok;
 static atomic_t rx_other;
 static struct radio_socket radio_sock = { .fd = -1 };
 static K_SEM_DEFINE(rx_ready, 0, 1);
+static K_MUTEX_DEFINE(gateway_memory_lock);
 
-/* Runs in the RX thread. Synchronize table access before adding other readers. */
+/* Runs in the RX thread; console output uses a copy outside the table lock. */
 static void handle_sensor_reading(const struct sensor_reading *r)
 {
 	struct gateway_memory_entry entry;
 	int ret;
+	int get_ret;
 
+	k_mutex_lock(&gateway_memory_lock, K_FOREVER);
 	ret = gateway_memory_update(&gateway_memory, r, k_uptime_get_32());
+	get_ret = gateway_memory_get(&gateway_memory, r->node_id, &entry);
+	k_mutex_unlock(&gateway_memory_lock);
+
 	if (ret < 0) {
 		LOG_WRN("Memory update for node %u failed (%d)", r->node_id, ret);
 	}
-	if (gateway_memory_get(&gateway_memory, r->node_id, &entry) == 0) {
+	if (get_ret == 0) {
 		printk("memory node=%u seq=%u received_at=%u ms\n",
 		       entry.reading.node_id, entry.reading.seq,
 		       entry.received_at_ms);
@@ -167,9 +173,18 @@ static void gateway_run(void *p1, void *p2, void *p3)
 	LOG_INF("Listening promiscuous on ch %d, PAN ID 0x%04x set", GW_CHANNEL, GW_PAN_ID);
 
 	while (1) {
+		struct gateway_memory_stats stats;
+
 		k_sleep(K_MSEC(5000));
-		LOG_INF("gw ok=%u other=%u", (unsigned int)atomic_get(&rx_ok),
-			(unsigned int)atomic_get(&rx_other));
+		k_mutex_lock(&gateway_memory_lock, K_FOREVER);
+		gateway_memory_get_stats(&gateway_memory, k_uptime_get_32(),
+					 CONFIG_GATEWAY_NODE_ONLINE_TIMEOUT_MS, &stats);
+		k_mutex_unlock(&gateway_memory_lock);
+
+		LOG_INF("gw ok=%u other=%u stored=%u active=%u",
+			(unsigned int)atomic_get(&rx_ok),
+			(unsigned int)atomic_get(&rx_other),
+			(unsigned int)stats.valid_nodes, (unsigned int)stats.online_nodes);
 	}
 }
 

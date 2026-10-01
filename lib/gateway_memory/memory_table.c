@@ -68,3 +68,58 @@ int gateway_memory_get(struct gateway_memory *memory,
 
         return -ENOENT;
 }
+
+int gateway_memory_get_all(const struct gateway_memory *memory,
+                           struct gateway_memory_entry *entries,
+                           size_t capacity)
+{
+        size_t count = 0;
+
+        if (memory == NULL || entries == NULL) {
+                return -EINVAL;
+        }
+
+        for (size_t i = 0; i < GATEWAY_MEMORY_MAX_NODES; i++) {
+                if (memory->entries[i].valid) {
+                        count++;
+                }
+        }
+        if (capacity < count) {
+                return -ENOSPC;
+        }
+
+        count = 0;
+        for (size_t i = 0; i < GATEWAY_MEMORY_MAX_NODES; i++) {
+                if (memory->entries[i].valid) {
+                        entries[count++] = memory->entries[i];
+                }
+        }
+
+        return (int)count;
+}
+
+int gateway_memory_get_stats(const struct gateway_memory *memory,
+                             uint32_t now_ms, uint32_t online_timeout_ms,
+                             struct gateway_memory_stats *stats)
+{
+        struct gateway_memory_stats result = { 0 };
+
+        if (memory == NULL || stats == NULL) {
+                return -EINVAL;
+        }
+
+        for (size_t i = 0; i < GATEWAY_MEMORY_MAX_NODES; i++) {
+                const struct gateway_memory_entry *entry = &memory->entries[i];
+
+                if (!entry->valid) {
+                        continue;
+                }
+                result.valid_nodes++;
+                if ((uint32_t)(now_ms - entry->received_at_ms) <= online_timeout_ms) {
+                        result.online_nodes++;
+                }
+        }
+
+        *stats = result;
+        return 0;
+}
