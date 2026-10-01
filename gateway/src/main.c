@@ -35,12 +35,30 @@ LOG_MODULE_REGISTER(gateway, CONFIG_GATEWAY_LOG_LEVEL);
 static const struct device *const radio =
 	DEVICE_DT_GET(DT_CHOSEN(zephyr_ieee802154));
 
-
 static struct gateway_memory gateway_memory;
 static atomic_t rx_ok;
 static atomic_t rx_other;
 static struct radio_socket radio_sock = { .fd = -1 };
 static K_SEM_DEFINE(rx_ready, 0, 1);
+
+/* Runs in the RX thread. Synchronize table access before adding other readers. */
+static void handle_sensor_reading(const struct sensor_reading *r)
+{
+	struct gateway_memory_entry entry;
+
+	gateway_memory_update(&gateway_memory, r, k_uptime_get_32());
+	if (gateway_memory_get(&gateway_memory, r->node_id, &entry) == 0) {
+		printk("memory node=%u seq=%u received_at=%u ms\n",
+		       entry.reading.node_id, entry.reading.seq,
+		       entry.received_at_ms);
+	}
+
+	printk("rx node=%u seq=%u light=%u temp_c_x100=%d "
+	       "accel=%d,%d,%d uptime=%u flags=%u\n",
+	       r->node_id, r->seq, r->light, r->temp_c_x100,
+	       r->accel[0], r->accel[1], r->accel[2],
+	       r->uptime_ms, r->flags);
+}
 
 /*
  * Socket copies the complete frame (including MAC header) out of all packet
@@ -65,57 +83,34 @@ static void receive_frames(void *p1, void *p2, void *p3)
 		}
 		if (len >= 0 && sensor_frame_decode(psdu, len, &r) == 0) {
 			atomic_inc(&rx_ok);
-			printk("rx node=%u seq=%u light=%u temp_c_x100=%d "
-			       "accel=%d,%d,%d uptime=%u flags=%u\n",
-			       r.node_id, r.seq, r.light, r.temp_c_x100,
-			       r.accel[0], r.accel[1], r.accel[2],
-			       r.uptime_ms, r.flags);
+			handle_sensor_reading(&r);
 		} else {
 			atomic_inc(&rx_other);
 		}
 	}
-
-	frag = net_buf_frag_last(pkt->buffer);
-	if (frag != NULL && sensor_frame_decode(frag->data, frag->len, &r) == 0) {
-		rx_ok++;
-                gateway_memory_update(&gateway_memory, &r, k_uptime_get_32());
-
-                struct gateway_memory_entry entry;
-                if (gateway_memory_get(&gateway_memory, r.node_id, &entry) == 0) {
-                        printk("memory node=%u seq=%u received_at=%u ms\n",
-                               entry.reading.node_id,
-                               entry.reading.seq,
-                               entry.received_at_ms);
-                }
-		printk("rx node=%u seq=%u light=%u temp_c_x100=%d "
-		       "accel=%d,%d,%d uptime=%u flags=%u\n",
-		       r.node_id, r.seq, r.light, r.temp_c_x100,
-		       r.accel[0], r.accel[1], r.accel[2],
-		       r.uptime_ms, r.flags);
-	} else {
-		rx_other++;
-	}
-
-	net_pkt_unref(pkt);
-	return 0;
 }
 
 K_THREAD_DEFINE(radio_rx_id, 2048, receive_frames, NULL, NULL, NULL, 5, 0, 0);
 
-int main(void)
+static void gateway_run(void *p1, void *p2, void *p3)
 {
 	const struct ieee802154_radio_api *api;
 	struct net_if *iface;
 	uint16_t channel = GW_CHANNEL;
 	int ret;
-        gateway_memory_init(&gateway_memory);
+
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
+	gateway_memory_init(&gateway_memory);
 
 	printk("Gateway %s (samr21_xpro, ch %d, pan 0x%04x, promiscuous)\n",
 	       APP_VERSION_STRING, GW_CHANNEL, GW_PAN_ID);
 
 	if (!device_is_ready(radio)) {
 		LOG_ERR("Radio not ready");
-		return 0;
+		return;
 	}
 
 	api = (const struct ieee802154_radio_api *)radio->api;
@@ -123,14 +118,14 @@ int main(void)
 	ret = radio_socket_open(&radio_sock, iface);
 	if (ret < 0) {
 		LOG_ERR("Raw socket open failed (%d)", ret);
-		return 0;
+		return;
 	}
 	/* Set both L2 state and hardware: L2 refuses to start without a channel. */
 	ret = net_mgmt(NET_REQUEST_IEEE802154_SET_CHANNEL, iface, &channel, sizeof(channel));
 	if (ret < 0) {
 		LOG_ERR("set_channel(%d) failed (%d)", GW_CHANNEL, ret);
 		radio_socket_close(&radio_sock);
-		return 0;
+		return;
 	}
 
 	/* Our PAN ID, in the hardware filter. Promiscuous mode below accepts
@@ -161,7 +156,7 @@ int main(void)
 	if (ret < 0) {
 		LOG_ERR("Radio interface up failed (%d)", ret);
 		radio_socket_close(&radio_sock);
-		return 0;
+		return;
 	}
 	k_sem_give(&rx_ready);
 
@@ -172,6 +167,12 @@ int main(void)
 		LOG_INF("gw ok=%u other=%u", (unsigned int)atomic_get(&rx_ok),
 			(unsigned int)atomic_get(&rx_other));
 	}
+}
 
+K_THREAD_DEFINE(gateway_id, 1024, gateway_run, NULL, NULL, NULL, 0, 0, 0);
+
+int main(void)
+{
+	/* Gateway threads start automatically; other services can start here. */
 	return 0;
 }
