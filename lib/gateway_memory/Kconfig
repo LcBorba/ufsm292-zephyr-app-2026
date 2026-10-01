@@ -1,0 +1,9 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+config GATEWAY_MEMORY
+        bool "Gateway memory table"
+        default y
+        help
+          Enables the in-memory table that stores the latest reading
+          received from each sensor node.
