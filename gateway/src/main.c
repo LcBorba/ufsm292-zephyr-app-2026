@@ -19,6 +19,9 @@
 #include <zephyr/net/ieee802154_radio.h>
 #include <zephyr/net/ieee802154.h>
 #include <zephyr/net/ieee802154_mgmt.h>
+#include <zephyr/net/ethernet_mgmt.h>
+#include <zephyr/net/net_mgmt.h>
+#include <zephyr/net/dhcpv4.h>
 #include <zephyr/sys/atomic.h>
 #include "radio_socket.h"
 
@@ -40,6 +43,74 @@ static atomic_t rx_ok;
 static atomic_t rx_other;
 static struct radio_socket radio_sock = { .fd = -1 };
 static K_SEM_DEFINE(rx_ready, 0, 1);
+
+/* Ethernet link monitor: logs carrier up/down and current IPv4 address. */
+static void eth_event_handler(struct net_mgmt_event_callback *cb,
+			      uint64_t event, struct net_if *iface)
+{
+	char addr[NET_IPV4_ADDR_LEN];
+	ARG_UNUSED(cb);
+	if (net_if_l2(iface) != &NET_L2_GET_NAME(ETHERNET)) {
+		return;
+	}
+	if (event == NET_EVENT_ETHERNET_CARRIER_ON) {
+		LOG_INF("eth: carrier on");
+	} else if (event == NET_EVENT_ETHERNET_CARRIER_OFF) {
+		LOG_WRN("eth: carrier off");
+	} else if (event == NET_EVENT_IPV4_ADDR_ADD) {
+		struct net_in_addr *ip = net_if_ipv4_get_global_addr(iface,
+								 NET_ADDR_PREFERRED);
+
+		if (ip != NULL && net_addr_ntop(AF_INET, ip, addr, sizeof(addr)) != NULL) {
+			LOG_INF("eth: ipv4 %s", addr);
+		}
+	}
+}
+
+static struct net_mgmt_event_callback eth_cb;
+
+static void eth_monitor_run(void *p1, void *p2, void *p3)
+{
+	struct net_if *eth;
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+	net_mgmt_init_event_callback(&eth_cb, eth_event_handler,
+				     NET_EVENT_ETHERNET_CARRIER_ON |
+				     NET_EVENT_ETHERNET_CARRIER_OFF |
+				     NET_EVENT_IPV4_ADDR_ADD);
+	net_mgmt_add_event_callback(&eth_cb);
+	eth = net_if_get_first_by_type(&NET_L2_GET_NAME(ETHERNET));
+	if (eth == NULL) {
+		LOG_WRN("eth: no ethernet interface, monitor idle");
+		return;
+	}
+	if (!device_is_ready(net_if_get_device(eth))) {
+		LOG_ERR("eth: controller initialization failed");
+		return;
+	}
+	if (!net_if_is_admin_up(eth)) {
+		int ret = net_if_up(eth);
+
+		if (ret < 0) {
+			LOG_ERR("eth: net_if_up failed (%d)", ret);
+			return;
+		}
+	}
+	net_dhcpv4_start(eth);
+	LOG_INF("eth: monitor up, carrier=%s admin=%s",
+		net_if_is_carrier_ok(eth) ? "ok" : "down",
+		net_if_is_admin_up(eth) ? "up" : "down");
+	while (true) {
+		k_sleep(K_MSEC(10000));
+		LOG_INF("eth: carrier=%s admin=%s",
+			net_if_is_carrier_ok(eth) ? "ok" : "down",
+			net_if_is_admin_up(eth) ? "up" : "down");
+	}
+}
+
+K_THREAD_DEFINE(eth_monitor_id, 1024, eth_monitor_run, NULL, NULL, NULL, 7, 0, 0);
+
 static K_MUTEX_DEFINE(gateway_memory_lock);
 
 /* Runs in the RX thread; console output uses a copy outside the table lock. */
