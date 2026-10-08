@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+
+common:
+  tags:
+    - gateway
+    - json
+
+tests:
+  lib.gateway.sensors_json:
+    platform_allow:
+      - native_sim/native/64
+    tags:
+      - unit
