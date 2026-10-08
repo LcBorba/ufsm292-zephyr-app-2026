@@ -1,0 +1,10 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+config GATEWAY_JSON
+	bool "Gateway sensor JSON encoder"
+	depends on GATEWAY_MEMORY
+	default y
+	help
+	  Enables bounded JSON encoding of the latest readings in the Gateway
+	  memory table.

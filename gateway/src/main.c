@@ -24,6 +24,8 @@
 
 #include <app/lib/sensor_frame.h>
 #include <app/gateway/memory_table.h>
+#include <app/gateway/sensors_json.h>
+#include <app/gateway/sensors_response.h>
 
 #include <zephyr/app_version.h>
 
@@ -41,6 +43,12 @@ static atomic_t rx_other;
 static struct radio_socket radio_sock = { .fd = -1 };
 static K_SEM_DEFINE(rx_ready, 0, 1);
 static K_MUTEX_DEFINE(gateway_memory_lock);
+
+int gateway_sensors_json_response(char *output, size_t capacity)
+{
+	return gateway_sensors_json_encode(&gateway_memory, &gateway_memory_lock,
+					   output, capacity);
+}
 
 /* Runs in the RX thread; console output uses a copy outside the table lock. */
 static void handle_sensor_reading(const struct sensor_reading *r)
