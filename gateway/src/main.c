@@ -13,12 +13,16 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
+#include <zephyr/init.h>
 #include <zephyr/logging/log.h>
 
 #include <zephyr/net/net_if.h>
 #include <zephyr/net/ieee802154_radio.h>
 #include <zephyr/net/ieee802154.h>
 #include <zephyr/net/ieee802154_mgmt.h>
+#include <zephyr/net/ethernet_mgmt.h>
+#include <zephyr/net/net_mgmt.h>
+#include <zephyr/net/dhcpv4.h>
 #include <zephyr/sys/atomic.h>
 #include "radio_socket.h"
 
@@ -42,6 +46,69 @@ static atomic_t rx_ok;
 static atomic_t rx_other;
 static struct radio_socket radio_sock = { .fd = -1 };
 static K_SEM_DEFINE(rx_ready, 0, 1);
+
+/* Ethernet link monitor: logs carrier up/down and current IPv4 address. */
+static void eth_event_handler(struct net_mgmt_event_callback *cb,
+			      uint64_t event, struct net_if *iface)
+{
+	char addr[NET_IPV4_ADDR_LEN];
+	ARG_UNUSED(cb);
+	if (net_if_l2(iface) != &NET_L2_GET_NAME(ETHERNET)) {
+		return;
+	}
+	if (event == NET_EVENT_ETHERNET_CARRIER_ON) {
+		LOG_INF("eth: carrier on");
+	} else if (event == NET_EVENT_ETHERNET_CARRIER_OFF) {
+		LOG_WRN("eth: carrier off");
+	} else if (event == NET_EVENT_IPV4_ADDR_ADD) {
+		struct net_in_addr *ip = net_if_ipv4_get_global_addr(iface,
+								 NET_ADDR_PREFERRED);
+
+		if (ip != NULL && net_addr_ntop(AF_INET, ip, addr, sizeof(addr)) != NULL) {
+			LOG_INF("eth: ipv4 %s", addr);
+		}
+	}
+}
+
+static struct net_mgmt_event_callback eth_cb;
+static struct net_if *eth_iface;
+
+/* Run after device/network initialization and before the application threads. */
+static int eth_setup(void)
+{
+	net_mgmt_init_event_callback(&eth_cb, eth_event_handler,
+				     NET_EVENT_ETHERNET_CARRIER_ON |
+				     NET_EVENT_ETHERNET_CARRIER_OFF |
+				     NET_EVENT_IPV4_ADDR_ADD);
+	net_mgmt_add_event_callback(&eth_cb);
+	eth_iface = net_if_get_first_by_type(&NET_L2_GET_NAME(ETHERNET));
+	if (eth_iface == NULL) {
+		LOG_WRN("eth: no ethernet interface, monitor idle");
+		return -ENODEV;
+	}
+	if (!device_is_ready(net_if_get_device(eth_iface))) {
+		LOG_ERR("eth: controller initialization failed");
+		eth_iface = NULL;
+		return -ENODEV;
+	}
+	if (!net_if_is_admin_up(eth_iface)) {
+		int ret = net_if_up(eth_iface);
+
+		if (ret < 0) {
+			LOG_ERR("eth: net_if_up failed (%d)", ret);
+			eth_iface = NULL;
+			return ret;
+		}
+	}
+	net_dhcpv4_start(eth_iface);
+	LOG_INF("eth: monitor up, carrier=%s admin=%s",
+		net_if_is_carrier_ok(eth_iface) ? "ok" : "down",
+		net_if_is_admin_up(eth_iface) ? "up" : "down");
+	return 0;
+}
+
+SYS_INIT(eth_setup, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
+
 static K_MUTEX_DEFINE(gateway_memory_lock);
 
 int gateway_sensors_json_response(char *output, size_t capacity)
@@ -121,8 +188,6 @@ static void gateway_run(void *p1, void *p2, void *p3)
 	ARG_UNUSED(p2);
 	ARG_UNUSED(p3);
 
-	gateway_memory_init(&gateway_memory);
-
 	printk("Gateway %s (samr21_xpro, ch %d, pan 0x%04x, promiscuous)\n",
 	       APP_VERSION_STRING, GW_CHANNEL, GW_PAN_ID);
 
@@ -180,10 +245,13 @@ static void gateway_run(void *p1, void *p2, void *p3)
 
 	LOG_INF("Listening promiscuous on ch %d, PAN ID 0x%04x set", GW_CHANNEL, GW_PAN_ID);
 
+	unsigned int ticks = 0;
+
 	while (1) {
 		struct gateway_memory_stats stats;
 
 		k_sleep(K_MSEC(5000));
+		ticks++;
 		k_mutex_lock(&gateway_memory_lock, K_FOREVER);
 		gateway_memory_get_stats(&gateway_memory, k_uptime_get_32(),
 					 CONFIG_GATEWAY_NODE_ONLINE_TIMEOUT_MS, &stats);
@@ -193,7 +261,13 @@ static void gateway_run(void *p1, void *p2, void *p3)
 			(unsigned int)atomic_get(&rx_ok),
 			(unsigned int)atomic_get(&rx_other),
 			(unsigned int)stats.valid_nodes, (unsigned int)stats.online_nodes);
+		if (eth_iface != NULL && (ticks % 2) == 0) {
+			LOG_INF("eth: carrier=%s admin=%s",
+				net_if_is_carrier_ok(eth_iface) ? "ok" : "down",
+				net_if_is_admin_up(eth_iface) ? "up" : "down");
+		}
 	}
+
 }
 
 K_THREAD_DEFINE(gateway_id, 1024, gateway_run, NULL, NULL, NULL, 0, 0, 0);

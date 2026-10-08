@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config ETH_KSZ8851SNL
+	bool "Microchip KSZ8851SNL Ethernet controller"
+	default y
+	depends on ETH_DRIVER && DT_HAS_MICROCHIP_KSZ8851SNL_ENABLED
+	select SPI
+	select GPIO
+	help
+	  Enable the KSZ8851SNL 10/100 Ethernet controller with SPI interface.
